@@ -69,6 +69,7 @@ var app = express();
 app.get('/node_count', function (req, res) {
   let hours = req.query.hours;
   if (!isFinite(hours) || hours > 10) hours = 10;
+  let host2lastconnection = {};
   recentConnections(1000*60*60*hours)
   .on('data', function(connection) {
     let key = connection.host+":"+connection.port;
