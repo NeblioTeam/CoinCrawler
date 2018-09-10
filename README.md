@@ -7,4 +7,4 @@
 * npm install
 * node run.js -network=btc-livenet -port=3003
 * see if it's running: localhost:3003/node_count, localhost:3003/full_nodes.csv
-* currently btc, bch, ltc and dash are supported. You can add more coins to networks.js
+* currently btc, bch, ltc and dash are supported. You can add more coins to [networks.js](networks.js)
