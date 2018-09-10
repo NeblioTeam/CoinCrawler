@@ -1,0 +1,6 @@
+node_modules
+
+GeoLite2-ASN/*
+!GeoLite2-ASN/README.md
+
+databases/*
