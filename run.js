@@ -116,7 +116,27 @@ function formatPercentage(val) {
 
 let full_nodes_result = {};
 
+/*
+TODO:
+let active30d = new BitSet;
+let host2active = {};
+let host2LastSuccesfullConnection = {};
+
+every hour: 
+  active30d = active30d.slice(1); active30d.set(30*24, 1)//remove last hour 30 days ago
+  for (Object.keys(host2active2).forEach(host => host2active2[host] = host2active2[host].slice(1)));
+*/
+
+var key2cb = {};//to avoid duplicate work
+
 function computeFullNodeCsv(delimiter, language, callback) {
+  let key = delimiter+":"+language;
+  if (key2cb[key] == undefined) {
+    key2cb[key] = [callback];
+  } else {
+    key2cb[key].push(callback);
+    return;
+  }
   let currentTime = (new Date()).getTime();
   let crawler_active = {};
   let host2active = {};
@@ -205,34 +225,37 @@ function computeFullNodeCsv(delimiter, language, callback) {
         count_24h-count_8h === 0 ? not_available : formatPercentage(sum_24h/count_24h), 
         count_7d-count_24h === 0 ? not_available : formatPercentage(sum_7d/count_7d), 
         count_30d-count_7d === 0 ? not_available : formatPercentage(sum_30d/count_30d), 
-        geo ? geo.region : not_available,
-        geo ? countries.getName(geo.country, language) : not_available, 
-        geo ? geo.city : not_available,
-        geo && geo.ll.length===2 ? geo.ll[0] : not_available,
-        geo && geo.ll.length===2 ? geo.ll[1] : not_available,
+        geo && geo.region ? geo.region : not_available,
+        geo && geo.country ? countries.getName(geo.country, language) : not_available, 
+        geo && geo.city ? geo.city : not_available,
+        geo && geo.ll && geo.ll.length===2 ? geo.ll[0] : not_available,
+        geo && geo.ll && geo.ll.length===2 ? geo.ll[1] : not_available,
         asn ? asn.autonomous_system_organization : not_available,
         lastConnection.bestHeight,
         lastConnection.version,
         lastConnection.subversion];
-      lines.push(columns.map(column => "\""+column+"\"").join(delimiter));
+      lines.push(columns.map(column => "\""+column.toString().replace(/\"/g, "\"\"")+"\"").join(delimiter));
     });
-    callback(lines.join("\n"));
+    let res = lines.join("\n");
+    key2cb[key].forEach(cb => cb(res));
+    key2cb[key] = undefined;
+    //callback(lines.join("\n"));
   });  
 }
 
 function updateFullNodeCsvNowAndEveryHour(delimiter, language) {
-  let key = delimiter+":"+language
+  let key = delimiter+":"+language;
   computeFullNodeCsv(delimiter, language, function(data) {
     full_nodes_result[key] = {
       data: data,
       time: (new Date()).getTime()
     };
+    let currentTime = (new Date()).getTime();
+    let nextFullHour = Math.ceil(currentTime/(1000*60*60))*(1000*60*60);
+    setTimeout(function() {
+      updateFullNodeCsvNowAndEveryHour(delimiter, language);
+    }, nextFullHour-currentTime);
   });
-  let currentTime = (new Date()).getTime();
-  let nextFullHour = Math.ceil(currentTime/(1000*60*60))*(1000*60*60);
-  setTimeout(function() {
-    updateFullNodeCsvNowAndEveryHour(delimiter, language);
-  }, nextFullHour-currentTime);
 }
 
 updateFullNodeCsvNowAndEveryHour(",", "en");
