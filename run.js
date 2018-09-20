@@ -286,9 +286,9 @@ function data2Csv(delimiter, language) {
       geo && geo.ll && geo.ll.length===2 ? geo.ll[0] : not_available,
       geo && geo.ll && geo.ll.length===2 ? geo.ll[1] : not_available,
       asn ? asn.autonomous_system_organization : not_available,
-      lastConnection.bestHeight,
-      lastConnection.version,
-      lastConnection.subversion];
+      lastConnection.bestHeight !== undefined && lastConnection.bestHeight !== null ? lastConnection.bestHeight : not_available,
+      lastConnection.version !== undefined && lastConnection.version !== null ? lastConnection.version : not_available,
+      lastConnection.subversion !== undefined && lastConnection.subversion !== null ? lastConnection.subversion : not_available];
     lines.push(columns.map(column => "\""+column.toString().replace(/\"/g, "\"\"")+"\"").join(delimiter));
   });
   return lines.join("\n")
