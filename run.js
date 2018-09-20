@@ -6,6 +6,7 @@ const level = require('level');
 const maxmind = require('maxmind');
 const bitcore_lib = require('bitcore-lib');
 const networks = require('./networks');
+const BitSet = require('bitset');
 
 var network_name = "bch-livenet";
 let api_port = 3000;
@@ -13,9 +14,9 @@ let api_port = 3000;
 const asnLookup = maxmind.openSync('GeoLite2-ASN/GeoLite2-ASN.mmdb');
 
 const stay_connected_time = 1000*60*5;//how long to wait for addr messages.
-const max_concurrent_connections = 200;
+const max_concurrent_connections = 250;
 const max_failed_connections_per_minute = 200;//55;
-const max_age = 1000*60*60*8;
+const max_age = 1000*60*60*7;
 const addr_db_ttl = -1;//How long to save addr messages for. The saved addr messages are currently not used for anything. 0 = never delete, -1 = never save
 const connect_timeout = 1000*30;
 const handshake_timeout = 1000*30;
@@ -111,10 +112,12 @@ app.get('/connections/:host_ip.csv', function(req, res) {
 
 
 function formatPercentage(val) {
+  if (isNaN(val)) val = 0;
   return (val*100).toFixed(2)+"%";
 }
 
 let full_nodes_result = {};
+
 
 /*
 TODO:
@@ -127,7 +130,240 @@ every hour:
   for (Object.keys(host2active2).forEach(host => host2active2[host] = host2active2[host].slice(1)));
 */
 
-var key2cb = {};//to avoid duplicate work
+let data = {
+  epoch_hour: 0,
+  hour2first_and_last_connection_time: {},
+  hostdata: {
+    host2active: {},
+    host2lastconnection: {},
+    host2count2h: {},
+    host2count8h: {},
+    host2count24h: {},
+    host2count7d: {},
+    host2count30d: {}
+  },
+  count2h: 0,
+  count8h: 0,
+  count24h: 0,
+  count7d: 0,
+  count30d: 0
+};
+
+function update_crawler_data_statistics() {
+  let count2h = 0, count8h = 0, count24h = 0, count7d = 0, count30d = 0;
+  Object.keys(data.hour2first_and_last_connection_time).forEach(hours_ago => {
+    let crawler_active = data.hour2first_and_last_connection_time[hours_ago].max-data.hour2first_and_last_connection_time[hours_ago].min > 1000*60*45;
+    if (!crawler_active) {//ignore the hour if less than 45 min running time.
+      //delete data.hour2first_and_last_connection_time[hours_ago];
+      return;
+    }
+    if (hours_ago <= 2) {
+      count2h++;
+    }
+    if (hours_ago <= 8) {
+      count8h++;
+    }
+    if (hours_ago <= 24) {
+      count24h++;
+    }
+    if (hours_ago <= 24*7) {
+      count7d++;
+    } 
+    if (hours_ago <= 24*30) {
+      count30d++;
+    }
+  });
+  data.count2h = count2h;
+  data.count8h = count8h;
+  data.count24h = count24h;
+  data.count7d = count7d;
+  data.count30d = count30d;
+}
+
+
+function update_host_data_statistics() {
+  Object.keys(data.hostdata.host2lastconnection).forEach(host => {
+    let count2h = 0, count8h = 0, count24h = 0, count7d = 0, count30d = 0;
+    Object.keys(data.hour2first_and_last_connection_time).forEach(hours_ago => {
+      let crawler_active = data.hour2first_and_last_connection_time[hours_ago].max-data.hour2first_and_last_connection_time[hours_ago].min > 1000*60*45;
+      let host_active = data.hostdata.host2active[host].get(hours_ago);
+      if (!crawler_active || !host_active) {
+        return;
+      } 
+      if (hours_ago <= 2) {
+        count2h++;
+      }
+      if (hours_ago <= 8) {
+        count8h++;
+      }
+      if (hours_ago <= 24) {
+        count24h++;
+      }
+      if (hours_ago <= 24*7) {
+        count7d++;
+      } 
+      if (hours_ago <= 24*30) {
+        count30d++;
+      }
+    }); 
+    data.hostdata.host2count2h[host] = count2h;
+    data.hostdata.host2count8h[host] = count8h;
+    data.hostdata.host2count24h[host] = count24h;
+    data.hostdata.host2count7d[host] = count7d;
+    data.hostdata.host2count30d[host] = count30d; 
+  });
+}
+
+function add_connection2data(connection) {
+  if (shifting_data) {//delay by 1 second
+    setTimeout(function() {
+      add_connection2data(connection);
+    }, 1000);
+    return;
+  }
+  let connectTime = connection.connectTime;
+  let connect_hour = Math.floor(connectTime/(1000*60*60));
+  let hours_ago = data.epoch_hour-connect_hour;
+  if (hours_ago < 0) return;
+  let host = connection.host+":"+connection.port;
+
+  if (data.hour2first_and_last_connection_time[hours_ago] === undefined) {
+    data.hour2first_and_last_connection_time[hours_ago] = {min: connectTime, max: connectTime};
+  } else {
+    if (connectTime < data.hour2first_and_last_connection_time[hours_ago].min) {
+      data.hour2first_and_last_connection_time[hours_ago].min = connectTime;
+    }
+    if (connectTime > data.hour2first_and_last_connection_time[hours_ago].max) {
+      data.hour2first_and_last_connection_time[hours_ago].max = connectTime;
+    }
+  }
+
+  if (data.hostdata.host2active[host] === undefined) {
+    data.hostdata.host2active[host] = new BitSet();
+  }  
+  data.hostdata.host2active[host].set(hours_ago, connection.success ? 1 : 0); 
+  if (connection.success && (data.hostdata.host2lastconnection[host] === undefined || data.hostdata.host2lastconnection[host].connectedTime < connection.connectedTime)) {
+    data.hostdata.host2lastconnection[host] = connection;
+  }
+}
+
+function loadDataFromDb() {
+  let currentTime = (new Date()).getTime();
+  data.epoch_hour = Math.floor(currentTime/(1000*60*60));
+  recentConnections(1000*60*60*24*30)
+  .on('data', function(connection) {
+    add_connection2data(connection);
+  })  
+  .on('close', function() {
+    update_crawler_data_statistics();
+    update_host_data_statistics();
+  });  
+}
+
+function data2Csv(delimiter, language) {
+  let lines = [];
+  Object.keys(data.hostdata.host2lastconnection).forEach(host => {
+    let lastConnection = data.hostdata.host2lastconnection[host];
+    let components = host.split(":");
+    let ip = components[0];
+    let port = components[1];
+    let geo = geoip.lookup(ip);
+    let asn = asnLookup.get(ip);
+    let not_available = "N/A";
+    let columns = [ip,
+      port, 
+      data.count2h === 0 || data.hostdata.host2count2h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count2h[host]/data.count2h), 
+      data.count8h-data.count2h === 0 || data.hostdata.host2count8h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count8h[host]/data.count8h), 
+      data.count24h-data.count8h === 0 || data.hostdata.host2count24h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count24h[host]/data.count24h), 
+      data.count7d-data.count24h === 0 || data.hostdata.host2count7d[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count7d[host]/data.count7d), 
+      data.count30d-data.count7d === 0 || data.hostdata.host2count30d[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count30d[host]/data.count30d), 
+      geo && geo.region ? geo.region : not_available,
+      geo && geo.country ? countries.getName(geo.country, language) : not_available, 
+      geo && geo.city ? geo.city : not_available,
+      geo && geo.ll && geo.ll.length===2 ? geo.ll[0] : not_available,
+      geo && geo.ll && geo.ll.length===2 ? geo.ll[1] : not_available,
+      asn ? asn.autonomous_system_organization : not_available,
+      lastConnection.bestHeight,
+      lastConnection.version,
+      lastConnection.subversion];
+    lines.push(columns.map(column => "\""+column.toString().replace(/\"/g, "\"\"")+"\"").join(delimiter));
+  });
+  return lines.join("\n")
+}
+
+app.get("/full_nodes.csv", function(req, res) {
+  let delimiter = req.query.delimiter;
+  let language = req.query.language;
+  if (delimiter === undefined) delimiter = ",";
+  if (language === undefined) language = "en";
+
+  res.set('Content-Type', 'text/csv');
+  res.send(data2Csv(delimiter, language));
+  /*
+  let currentTime = (new Date()).getTime();
+  res.set('Content-Type', 'text/csv');
+  let key = delimiter+":"+language
+  if (full_nodes_result[key] === undefined || currentTime-full_nodes_result[key].time > 1000*60*60*1) { 
+    computeFullNodeCsv(delimiter, language, function(data) {
+      full_nodes_result[key] = {
+        data: data,
+        time: (new Date()).getTime()
+      };
+      res.send(data);
+    });
+  } else {
+    res.send(full_nodes_result[key].data);
+  }
+  */
+});
+
+
+function shift_data_one_hour() {
+  let shifted = {};
+  Object.keys(data.hour2first_and_last_connection_time).forEach(hour => {
+    if (hour+1 > 24*30) return;//only keep 30 days
+    shifted[hour+1] = data.hour2first_and_last_connection_time[hour];
+  });
+  data.hour2first_and_last_connection_time = shifted;
+
+  Object.keys(data.hostdata.host2lastconnection).forEach(host => {
+    let lastConnection = data.hostdata.host2lastconnection[host];
+    let last_connect_hour = Math.floor(lastConnection.connectTime/(1000*60*60));
+    if (data.epoch_hour-last_connect_hour > 24*30) {
+      delete data.hostdata.host2lastconnection[host];
+      return;
+    }
+    for (let i = 24*30; i > 0; i--) {
+      data.hostdata.host2active[host].set(i, data.hostdata.host2active[host].get(i-1));
+    }
+  });
+}
+
+let shifting_data = false;
+
+function update_if_hour_changed() {
+  let currentTime = (new Date()).getTime();
+  let epoch_hour = Math.floor(currentTime/(1000*60*60));
+  if (data.epoch_hour >= epoch_hour) return;
+  shifting_data = true;
+  console.log("Hour changed. Updating uptimes");
+  data.epoch_hour = epoch_hour;
+  shift_data_one_hour();
+  update_crawler_data_statistics();
+  update_host_data_statistics();
+  shifting_data = false;
+}
+
+
+
+console.log("Loading connections from db. This can take a while.");
+loadDataFromDb();
+console.log("Data loaded. Acccepting requests");
+app.listen(api_port);
+
+
+
+/*var key2cb = {};//to avoid duplicate work
 
 function computeFullNodeCsv(delimiter, language, callback) {
   let key = delimiter+":"+language;
@@ -258,31 +494,9 @@ function updateFullNodeCsvNowAndEveryHour(delimiter, language) {
   });
 }
 
-updateFullNodeCsvNowAndEveryHour(",", "en");
+updateFullNodeCsvNowAndEveryHour(",", "en");*/
 
-app.get("/full_nodes.csv", function(req, res) {
-  let delimiter = req.query.delimiter;
-  let language = req.query.language;
-  if (delimiter === undefined) delimiter = ",";
-  if (language === undefined) language = "en";
 
-  let currentTime = (new Date()).getTime();
-  res.set('Content-Type', 'text/csv');
-  let key = delimiter+":"+language
-  if (full_nodes_result[key] === undefined || currentTime-full_nodes_result[key].time > 1000*60*60*1) { 
-    computeFullNodeCsv(delimiter, language, function(data) {
-      full_nodes_result[key] = {
-        data: data,
-        time: (new Date()).getTime()
-      };
-      res.send(data);
-    });
-  } else {
-    res.send(full_nodes_result[key].data);
-  }
-});
-
-app.listen(api_port)
 
 function createRandomId () {
   return '' + Math.random().toString(36).substr(2, 9);
@@ -430,10 +644,23 @@ function createQueue(callback) {
   });
 }  
 
+
+function saveConnection(connection, connectionId) {
+  update_if_hour_changed();
+  add_connection2data(connection);
+  const ops = [
+    { type: 'put', key: connection_prefix+connectionId, value: connection },
+    { type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connectionId }
+  ];
+  db.batch(ops, function (err) {
+    if (err) return console.log('Ooops!', err);
+  });
+}
+
 function connectToPeers() {
   if (paused) return;
+  update_if_hour_changed();
   let currentTime = (new Date()).getTime();
-
   while (failed_connections_queue.length > 0 && currentTime-failed_connections_queue[0] > 1000*60) {
     failed_connections_queue.shift();
   }
@@ -464,21 +691,23 @@ function connectToPeers() {
       let peer = new p2p.Peer({host: host, port: port, network: network_name, messages: messages});
       let disconnect_called = false;
 
-      let connectionAttempt = {
+      let connectionSaved = false;
+
+      let connection = {
         host: peer.host, 
         port: peer.port,
         success:false, 
         connectTime: connectTime
       };
 
-      const ops = [
+      /*const ops = [
         { type: 'put', key: connection_prefix+connectionId, value: connectionAttempt },
         { type: 'put', key: connection_by_time_prefix+integer2LexString(connectTime)+"/"+connectionId, value: connectionId }
       ];
 
       db.batch(ops, function (err) {
         if (err) return console.log('Ooops!', err);
-      });
+      });*/
 
       let connectTimeout = setTimeout(function() {
         peer.disconnect(); 
@@ -516,7 +745,7 @@ function connectToPeers() {
         console.log("connected to ", peer.host+":"+peer.port, peer.version, peer.subversion, peer.bestHeight, peer.services, node_network, node_getutxo, node_bloom, node_witness, node_network_limited);
 
         let connectedTime = (new Date()).getTime();
-        let connectionSuccess = {
+        connection = {
           host: peer.host,
           port: peer.port, 
           version: peer.version, 
@@ -528,9 +757,13 @@ function connectToPeers() {
           connectTime: connectTime,
         };
 
-        db.put(connection_prefix+connectionId, connectionSuccess, function (err) {
+        if (!connectionSaved) {
+          connectionSaved = true;
+          saveConnection(connection, connectionId);
+        }
+        /*db.put(connection_prefix+connectionId, connectionSuccess, function (err) {
           if (err) return console.log('Ooops!', err) // some kind of I/O error
-        });
+        });*/
 
         
         let getaddr = messages.GetAddr();
@@ -552,6 +785,10 @@ function connectToPeers() {
       peer.on('disconnect', function() {
         clearTimeout(handshakeTimeout);
         clearTimeout(connectTimeout);
+        if (!connectionSaved) {
+          connectionSaved = true;
+          saveConnection(connection, connectionId);
+        }
         if (!disconnect_called) {
           disconnect_called = true;
           concurrent_connections--;
