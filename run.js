@@ -250,14 +250,17 @@ function add_connection2data(connection) {
 function loadDataFromDb() {
   let currentTime = (new Date()).getTime();
   data.epoch_hour = Math.floor(currentTime/(1000*60*60));
-  recentConnections(1000*60*60*24*30)
-  .on('data', function(connection) {
-    add_connection2data(connection);
-  })  
-  .on('close', function() {
-    update_crawler_data_statistics();
-    update_host_data_statistics();
-  });  
+  return new Promise(function(resolve, reject) {
+    recentConnections(1000*60*60*24*30)
+    .on('data', function(connection) {
+      add_connection2data(connection);
+    })  
+    .on('close', function() {
+      update_crawler_data_statistics();
+      update_host_data_statistics();
+      resolve();
+    });
+  });
 }
 
 function data2Csv(delimiter, language) {
@@ -357,145 +360,14 @@ function update_if_hour_changed() {
 
 
 console.log("Loading connections from db. This can take a while.");
-loadDataFromDb();
-console.log("Data loaded. Acccepting requests");
-app.listen(api_port);
+loadDataFromDb().then(function() {
+  console.log("Data loaded. Acccepting requests");
+  app.listen(api_port);
+  setInterval(connectToPeers, 50);
 
-
-
-/*var key2cb = {};//to avoid duplicate work
-
-function computeFullNodeCsv(delimiter, language, callback) {
-  let key = delimiter+":"+language;
-  if (key2cb[key] == undefined) {
-    key2cb[key] = [callback];
-  } else {
-    key2cb[key].push(callback);
-    return;
-  }
-  let currentTime = (new Date()).getTime();
-  let crawler_active = {};
-  let host2active = {};
-  let host2LastSuccesfullConnection = {};
-  recentConnections(1000*60*60*24*30)
-  .on('data', function(connection) {
-    let connectTime = connection.connectTime;
-    let hours_ago = Math.floor((currentTime-connectTime)/(1000*60*60));
-    if (crawler_active[hours_ago] === undefined) {
-      crawler_active[hours_ago] = {min: connectTime, max: connectTime};
-    } else {
-      if (connectTime < crawler_active[hours_ago].min) {
-        crawler_active[hours_ago].min = connectTime;
-      }
-      if (connectTime > crawler_active[hours_ago].max) {
-        crawler_active[hours_ago].max = connectTime;
-      }
-    }
-    let host = connection.host+":"+connection.port;
-    if (connection.success && (host2LastSuccesfullConnection[host] === undefined || host2LastSuccesfullConnection[host].connectedTime < connection.connectedTime)) {
-      host2LastSuccesfullConnection[host] = connection;
-    }
-    if (host2active[host] === undefined) {
-      host2active[host] = {};
-    }
-    host2active[host][hours_ago] = connection.success ? 1 : 0;
-  })
-  .on('close', function() {
-    let count_2h = 0, count_8h = 0, count_24h = 0, count_7d = 0, count_30d = 0;
-    Object.keys(crawler_active).forEach(hours_ago => {
-      if (hours_ago === 0 || crawler_active[hours_ago].max-crawler_active[hours_ago].min < 1000*60*45) {//ignore the hour if less than 45 min running time.
-        delete crawler_active[hours_ago];
-        return;
-      }
-      if (hours_ago < 2+1) {
-        count_2h++;
-      }
-      if (hours_ago < 8+1) {
-        count_8h++;
-      }
-      if (hours_ago < 24+1) {
-        count_24h++;
-      }
-      if (hours_ago < 24*7+1) {
-        count_7d++;
-      } 
-      if (hours_ago < 24*30+1) {
-        count_30d++;
-      }
-    });
-
-    let lines = [];
-    Object.keys(host2active).forEach(host => {
-      let sum_2h = 0, sum_8h = 0, sum_24h = 0, sum_7d = 0, sum_30d = 0;
-      Object.keys(host2active[host]).forEach(hours_ago => {
-        if (crawler_active[hours_ago] === undefined) return;
-        let value = host2active[host][hours_ago];
-        if (hours_ago < 2+1) {
-          sum_2h += value;
-        }
-        if (hours_ago < 8+1) {
-          sum_8h += value;
-        }
-        if (hours_ago < 24+1) {
-          sum_24h += value;
-        }
-        if (hours_ago < 24*7+1) {
-          sum_7d += value;
-        }
-        if (hours_ago < 24*30+1) {
-          sum_30d += value;
-        }
-      });
-      if (sum_30d === 0) return;
-      let components = host.split(":");
-      let ip = components[0];
-      let port = components[1];
-      let geo = geoip.lookup(ip);
-      let asn = asnLookup.get(ip);
-      let lastConnection = host2LastSuccesfullConnection[host];
-      let not_available = "N/A";
-      let columns = [ip,
-        port, 
-        count_2h === 0 ? not_available : formatPercentage(sum_2h/count_2h), 
-        count_8h-count_2h === 0 ? not_available : formatPercentage(sum_8h/count_8h), 
-        count_24h-count_8h === 0 ? not_available : formatPercentage(sum_24h/count_24h), 
-        count_7d-count_24h === 0 ? not_available : formatPercentage(sum_7d/count_7d), 
-        count_30d-count_7d === 0 ? not_available : formatPercentage(sum_30d/count_30d), 
-        geo && geo.region ? geo.region : not_available,
-        geo && geo.country ? countries.getName(geo.country, language) : not_available, 
-        geo && geo.city ? geo.city : not_available,
-        geo && geo.ll && geo.ll.length===2 ? geo.ll[0] : not_available,
-        geo && geo.ll && geo.ll.length===2 ? geo.ll[1] : not_available,
-        asn ? asn.autonomous_system_organization : not_available,
-        lastConnection.bestHeight,
-        lastConnection.version,
-        lastConnection.subversion];
-      lines.push(columns.map(column => "\""+column.toString().replace(/\"/g, "\"\"")+"\"").join(delimiter));
-    });
-    let res = lines.join("\n");
-    key2cb[key].forEach(cb => cb(res));
-    key2cb[key] = undefined;
-    //callback(lines.join("\n"));
-  });  
-}
-
-function updateFullNodeCsvNowAndEveryHour(delimiter, language) {
-  let key = delimiter+":"+language;
-  computeFullNodeCsv(delimiter, language, function(data) {
-    full_nodes_result[key] = {
-      data: data,
-      time: (new Date()).getTime()
-    };
-    let currentTime = (new Date()).getTime();
-    let nextFullHour = Math.ceil(currentTime/(1000*60*60))*(1000*60*60);
-    setTimeout(function() {
-      updateFullNodeCsvNowAndEveryHour(delimiter, language);
-    }, nextFullHour-currentTime);
-  });
-}
-
-updateFullNodeCsvNowAndEveryHour(",", "en");*/
-
+  if (addr_db_ttl !== undefined && addr_db_ttl > 0) 
+    setInterval(removeOldAddr, 1000*60);
+});
 
 
 function createRandomId () {
@@ -913,11 +785,6 @@ function removeOldAddr() {
   });
 
 }
-
-setInterval(connectToPeers, 50);
-
-if (addr_db_ttl !== undefined && addr_db_ttl > 0) 
-  setInterval(removeOldAddr, 1000*60);
 
 process.on('uncaughtException', (err) => {
   if (!err.toString().startsWith('Error: Unsupported message command')) {
