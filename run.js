@@ -346,6 +346,7 @@ function shift_data_one_hour() {
     for (let i = 24*30; i > 0; i--) {
       data.hostdata.host2active[host].set(i, data.hostdata.host2active[host].get(i-1));
     }
+    data.hostdata.host2active[host].set(0, 0);
   });
 }
 
