@@ -273,6 +273,13 @@ function data2Csv(delimiter, language) {
     let geo = geoip.lookup(ip);
     let asn = asnLookup.get(ip);
     let not_available = "N/A";
+    let country;
+    if (geo && geo.country) {
+      country = countries.getName(geo.country, language);
+      if (!country) country = geo.country;
+    } else {
+      country = not_available;
+    }
     let columns = [ip,
       port, 
       data.count2h === 0 || data.hostdata.host2count2h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count2h[host]/data.count2h), 
@@ -281,7 +288,7 @@ function data2Csv(delimiter, language) {
       data.count7d-data.count24h === 0 || data.hostdata.host2count7d[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count7d[host]/data.count7d), 
       data.count30d-data.count7d === 0 || data.hostdata.host2count30d[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count30d[host]/data.count30d), 
       geo && geo.region ? geo.region : not_available,
-      geo && geo.country ? countries.getName(geo.country, language) : not_available, 
+      country, 
       geo && geo.city ? geo.city : not_available,
       geo && geo.ll && geo.ll.length===2 ? geo.ll[0] : not_available,
       geo && geo.ll && geo.ll.length===2 ? geo.ll[1] : not_available,
