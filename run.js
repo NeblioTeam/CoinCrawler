@@ -110,6 +110,11 @@ app.get('/connections/:host_ip.csv', function(req, res) {
   });
 });
 
+app.get('/debug', function(req, res) {
+  res.set('Content-Type', 'application/json');
+  res.send(data);
+});
+
 
 function formatPercentage(val) {
   if (isNaN(val)) val = 0;
@@ -309,30 +314,16 @@ app.get("/full_nodes.csv", function(req, res) {
 
   res.set('Content-Type', 'text/csv');
   res.send(data2Csv(delimiter, language));
-  /*
-  let currentTime = (new Date()).getTime();
-  res.set('Content-Type', 'text/csv');
-  let key = delimiter+":"+language
-  if (full_nodes_result[key] === undefined || currentTime-full_nodes_result[key].time > 1000*60*60*1) { 
-    computeFullNodeCsv(delimiter, language, function(data) {
-      full_nodes_result[key] = {
-        data: data,
-        time: (new Date()).getTime()
-      };
-      res.send(data);
-    });
-  } else {
-    res.send(full_nodes_result[key].data);
-  }
-  */
 });
 
 
 function shift_data_one_hour() {
   let shifted = {};
   Object.keys(data.hour2first_and_last_connection_time).forEach(hour => {
-    if (hour+1 > 24*30) return;//only keep 30 days
-    shifted[hour+1] = data.hour2first_and_last_connection_time[hour];
+    let oldHour = Number(hour);
+    let newHour = oldHour+1;
+    if (newHour > 24*30) return;//only keep 30 days
+    shifted[newHour] = data.hour2first_and_last_connection_time[oldHour];
   });
   data.hour2first_and_last_connection_time = shifted;
 
