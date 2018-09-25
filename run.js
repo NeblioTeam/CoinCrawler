@@ -280,7 +280,7 @@ function computeMedianHeight(time, duration) {
   if (currentTime-connectionsSortedByTime.time >= 1000*60) {
     connectionsSortedByTime.connections = Object.keys(data.hostdata.host2lastconnection)
     .map(host => data.hostdata.host2lastconnection[host])
-    .filter(connection => heightIncludeUA.some(ua => connection.subversion.indexOf(ua) >= 0))
+    .filter(connection => typeof connection.subversion === "string" && heightIncludeUA.some(ua => connection.subversion.indexOf(ua) >= 0))
     .sort((connection1, connection2) => connection1.connectTime - connection2.connectTime);
     connectionsSortedByTime.time = currentTime;
   }
