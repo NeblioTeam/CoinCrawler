@@ -14,9 +14,9 @@ let api_port = 3000;
 const asnLookup = maxmind.openSync('GeoLite2-ASN/GeoLite2-ASN.mmdb');
 
 const stay_connected_time = 1000*60*5;//how long to wait for addr messages.
-const max_concurrent_connections = 250;
-const max_failed_connections_per_minute = 200;//55;
-const max_age = 1000*60*60*7;
+const max_concurrent_connections = 300;
+const max_failed_connections_per_minute = 800;
+const max_age = 1000*60*60*5;
 const addr_db_ttl = -1;//How long to save addr messages for. The saved addr messages are currently not used for anything. 0 = never delete, -1 = never save
 const connect_timeout = 1000*30;
 const handshake_timeout = 1000*30;
@@ -33,10 +33,12 @@ process.argv.forEach(function (val, index, array) {
 
 let protocolVersion;
 let seedNodes;
+let heightIncludeUA;
 networks.forEach(network => {
   if (network.name===network_name) {
     protocolVersion = network.protocolVersion;
     seedNodes = network.seedNodes;
+    heightIncludeUA = network.heightIncludeUA;
   }
   bitcore_lib.Networks.add(network);
 });
@@ -76,7 +78,7 @@ app.get('/node_count', function (req, res) {
     let key = connection.host+":"+connection.port;
     if (host2lastconnection[key] === undefined || connection.connectTime > host2lastconnection[key].connectTime)  {
       host2lastconnection[key] = connection;
-    }
+    }blockheight2count
   })
   .on('close', function() {
     res.send(
@@ -268,7 +270,48 @@ function loadDataFromDb() {
   });
 }
 
-function data2Csv(delimiter, language) {
+let connectionsSortedByTime = {
+  connections: [],
+  time: 0
+}
+
+function computeMedianHeight(time, duration) {
+  let currentTime = (new Date()).getTime();
+  if (currentTime-connectionsSortedByTime.time >= 1000*60) {
+    connectionsSortedByTime.connections = Object.keys(data.hostdata.host2lastconnection)
+    .map(host => data.hostdata.host2lastconnection[host])
+    .filter(connection => heightIncludeUA.some(ua => connection.subversion.indexOf(ua) >= 0))
+    .sort((connection1, connection2) => connection1.connectTime - connection2.connectTime);
+    connectionsSortedByTime.time = currentTime;
+  }
+  let connections = connectionsSortedByTime.connections;
+  let start = 0;
+  let end = connections.length-1;
+  let middle;
+  while (start <= end) {
+    middle = start+Math.floor((end-start)/2);
+    if (connections[middle].connectTime > time) {//too big
+      end = middle-1;
+    } else if (connections[middle].connectTime < time) {//too small
+      start = middle+1;
+    } else {
+      break;//found
+    }
+  }  
+  //let blockheight2count = {};
+  let i = middle;
+  let heights = [];
+  while (i >= 0 && time-connections[i].connectTime < duration) {
+    let connection = connections[i];
+    heights.push(connection.bestHeight);
+    i--;
+  }
+  heights.sort();
+  console.log(heights.length)
+  return heights[Math.floor(heights.length/2)];
+}
+
+function data2Csv(delimiter, language, requireSync, includeSync) {
   let lines = [];
   Object.keys(data.hostdata.host2lastconnection).forEach(host => {
     let lastConnection = data.hostdata.host2lastconnection[host];
@@ -279,6 +322,9 @@ function data2Csv(delimiter, language) {
     let asn = asnLookup.get(ip);
     let not_available = "N/A";
     let country;
+    let modeHeight = computeMedianHeight(lastConnection.connectTime, 1000*60*10);
+    let synced = Math.abs(lastConnection.bestHeight-modeHeight) < 50;
+    if (requireSync && !synced) return;
     if (geo && geo.country) {
       country = countries.getName(geo.country, language);
       if (!country) country = geo.country;
@@ -301,6 +347,9 @@ function data2Csv(delimiter, language) {
       lastConnection.bestHeight !== undefined && lastConnection.bestHeight !== null ? lastConnection.bestHeight : not_available,
       lastConnection.version !== undefined && lastConnection.version !== null ? lastConnection.version : not_available,
       lastConnection.subversion !== undefined && lastConnection.subversion !== null ? lastConnection.subversion : not_available];
+    if (includeSync) {
+      columns.push(synced ? 1 : 0);
+    }  
     lines.push(columns.map(column => "\""+column.toString().replace(/\"/g, "\"\"")+"\"").join(delimiter));
   });
   return lines.join("\n")
@@ -309,11 +358,19 @@ function data2Csv(delimiter, language) {
 app.get("/full_nodes.csv", function(req, res) {
   let delimiter = req.query.delimiter;
   let language = req.query.language;
+  let requireSync = req.query.requiresync;
+  let includeSync = req.query.includesync;
   if (delimiter === undefined) delimiter = ",";
   if (language === undefined) language = "en";
+  if (requireSync === undefined) requireSync = "true";
+  if (includeSync === undefined) includeSync = "false";
 
   res.set('Content-Type', 'text/csv');
-  res.send(data2Csv(delimiter, language));
+  let response = data2Csv(delimiter, 
+    language, 
+    requireSync === "true" || requireSync === "1", 
+    includeSync === "true" || includeSync === "1");
+  res.send(response);
 });
 
 
