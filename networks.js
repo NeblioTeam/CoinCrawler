@@ -1,6 +1,6 @@
 let networks = [
   {
-    name: 'btc-livenet',
+    name: 'btc',
     networkMagic: 0xf9beb4d9,
     port: 8333,
     protocolVersion: 70001,
@@ -14,7 +14,7 @@ let networks = [
     ]
   },
   {
-    name: 'bch-livenet',
+    name: 'bch',
     networkMagic: 0xe3e1f3e8,
     port: 8333,
     protocolVersion: 70001,
@@ -31,7 +31,7 @@ let networks = [
     ]
   },
   {
-    name: 'dash-livenet',
+    name: 'dash',
     networkMagic: 0xbf0c6bbd,
     port: 9999,
     protocolVersion: 130000,
@@ -45,7 +45,7 @@ let networks = [
     ]
   },
   {
-    name: 'ltc-livenet',
+    name: 'ltc',
     networkMagic: 0xfbc0b6db,
     port: 9333,
     protocolVersion: 70015,

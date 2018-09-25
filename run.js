@@ -298,7 +298,6 @@ function computeMedianHeight(time, duration) {
       break;//found
     }
   }  
-  //let blockheight2count = {};
   let i = middle;
   let heights = [];
   while (i >= 0 && time-connections[i].connectTime < duration) {
@@ -307,7 +306,6 @@ function computeMedianHeight(time, duration) {
     i--;
   }
   heights.sort();
-  console.log(heights.length)
   return heights[Math.floor(heights.length/2)];
 }
 
