@@ -91,7 +91,7 @@ app.get('/node_count', function (req, res) {
     let key = connection.host+":"+connection.port;
     if (host2lastconnection[key] === undefined || connection.connectTime > host2lastconnection[key].connectTime)  {
       host2lastconnection[key] = connection;
-    }blockheight2count
+    }
   })
   .on('close', function() {
     res.send(
