@@ -21,6 +21,9 @@ const addr_db_ttl = -1;//How long to save addr messages for. The saved addr mess
 const connect_timeout = 1000*30;
 const handshake_timeout = 1000*30;
 
+
+let indexTasks = [];
+
 process.argv.forEach(function (val, index, array) {
   let arr = val.split("=");
   if (arr.length === 2 && arr[0] === "-network") {
@@ -28,7 +31,13 @@ process.argv.forEach(function (val, index, array) {
   }
   if (arr.length === 2 && arr[0] === "-port") {
     api_port = arr[1];
-  } 
+  }
+  if (arr.length === 1 && arr[0] === "-reindex-connection-ip-addresses") {
+    indexTasks.push(reindexConnectionIpAddresses);
+  }
+  if (arr.length === 1 && arr[0] === "-reindex-connection-times") {
+    indexTasks.push(reindexConnectionTimes);
+  }
 }); 
 
 
@@ -51,6 +60,7 @@ const db = level('./databases/'+network_name, { valueEncoding: 'json', cacheSize
 //Database key prefixes
 const connection_prefix = "connection/";
 const connection_by_time_prefix = "connection-by-time/";
+const connection_by_ip_prefix = "connection-by-ip/";// /ip/time/connectionId
 const addr_prefix = "addr/"
 const addr_by_time_prefix = "addr-by-time/"
 const host2lastaddr_prefix = 'host2lastaddr/';
@@ -94,7 +104,7 @@ app.get('/connections/:host_ip.csv', function(req, res) {
   let ip = req.params.host_ip;
   let delimiter = ","
   let result = "";
-  recentConnections(undefined)
+  connectionsByHost(ip)
   .on('data', function(connection) {
     if (connection.host !== ip) return;
     let columns = [connection.connectTime, 
@@ -257,64 +267,72 @@ function add_connection2data(connection) {
   }
 }
 
-function indexConnections() {
+function reindexConnectionTimes() {
+  console.log("reindexing connection times");
   return new Promise(function(resolve, reject) {
-
-    let mustReindex = false;
-    db.createValueStream({
-      gt: connection_by_time_prefix, 
-      lt: connection_by_time_prefix+"z",
-      reverse: true,
-      limit: 1
+    let ops = [];
+    db.createReadStream({
+      gt: connection_prefix, 
+      lt: connection_prefix+"z"
     })
     .on('data', function (data) {
-      if (typeof data === "string") {
-        console.log("Reinxing connections required. Doing it now.");
-        mustReindex = true;
-      } else if (typeof data === "object") {
-        console.log("got object. no need to index!");
+      connectionFound = true;
+      let connection = data.value;
+      let connectionId = data.key.substr(data.key.indexOf("/")+1);
+      if (ops.length >= 1000) {
+        db.batch(ops, function (err) {
+          if (err) return console.log('Ooops!', err);
+        });
+        ops = [];
       }
-    })
+      ops.push({type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection});
+    })  
     .on('error', function (err) {
-      console.log("GOT db error", err);
+      console.log("GOT db error2", err);
     })
     .on('close', function () {
-      if (!mustReindex) {
+      db.batch(ops, function (err) {
+        if (err) return console.log('Ooops!', err);
         resolve();
-      } else {
-        let ops = [];
-        db.createReadStream({
-          gt: connection_prefix, 
-          lt: connection_prefix+"z"
-        })
-        .on('data', function (data) {
-          connectionFound = true;
-          let connection = data.value;
-          let connectionId = data.key.substr(data.key.indexOf("/")+1);
-          if (ops.length >= 1000) {
-            db.batch(ops, function (err) {
-              if (err) return console.log('Ooops!', err);
-            });
-            ops = [];
-          }
-          ops.push({type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection});
-        })  
-        .on('error', function (err) {
-          console.log("GOT db error2", err);
-        })
-        .on('close', function () {
-          db.batch(ops, function (err) {
-            if (err) return console.log('Ooops!', err);
-            resolve();
-          });
-        })
-        .on('end', function () {
-        });
-      }
+      });
     })
     .on('end', function () {
     });
   });  
+}
+
+function reindexConnectionIpAddresses() {
+  console.log("reindexing connection ip addresses");
+  return new Promise(function(resolve, reject) {
+    let ops = [];
+    db.createReadStream({
+      gt: connection_prefix, 
+      lt: connection_prefix+"z"
+    })
+    .on('data', function (data) {
+      connectionFound = true;
+      let connection = data.value;
+      let connectionId = data.key.substr(data.key.indexOf("/")+1);
+      if (ops.length >= 1000) {
+        db.batch(ops, function (err) {
+          if (err) return console.log('Ooops!', err);
+        });
+        ops = [];
+      }
+      ops.push({type: 'put', key: connection_by_ip_prefix+connection.host+"/"+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection});
+    })
+    .on('error', function (err) {
+      console.log("GOT db error3", err);
+    })
+    .on('close', function () {
+      db.batch(ops, function (err) {
+        if (err) return console.log('Ooops!', err);
+        resolve();
+      });
+    })
+    .on('end', function () {
+    });
+  });
 }
 
 function loadDataFromDb() {
@@ -474,9 +492,11 @@ function update_if_hour_changed() {
   shifting_data = false;
 }
 
-
-
-indexConnections().then(function() {
+var p = Promise.resolve();
+indexTasks.forEach(indexTask => {
+  p = p.then(() => indexTask());//sequentially execute indextasks
+})
+p.then(function() {
   console.log("Loading connections from db. This can take a while.");
   loadDataFromDb().then(function() {
     console.log("Data loaded. Acccepting requests");
@@ -502,6 +522,37 @@ function integer2LexString(number) {
   return result;
 }
 
+function connectionsByHost(host) {
+  let event2callback = {
+    'data': function(data) {},
+    'error': function(err) {},
+    'close': function() {},
+    'end': function() {}
+  }
+  db.createValueStream({
+    gt: connection_by_ip_prefix+host, 
+    lt: connection_by_ip_prefix+"z"
+  })
+  .on('data', function (data) {
+    event2callback['data'](data);
+  })
+  .on('error', function (err) {
+    event2callback['err'](err);
+  })
+  .on('close', function () {
+    event2callback['close']();
+  })
+  .on('end', function () {
+    event2callback['end']();
+  });
+
+  return {
+    on: function(event, callback) {
+      event2callback[event] = callback;
+      return this;
+    }
+  }
+}  
 
 function recentConnections(duration) {
   let currentTime = (new Date()).getTime();
@@ -515,16 +566,10 @@ function recentConnections(duration) {
 
   db.createValueStream({
     gt: connection_by_time_prefix+integer2LexString(currentTime-duration), 
-    lt: connection_by_time_prefix+"z"//,
-    //valueEncoding: 'utf8'
+    lt: connection_by_time_prefix+"z"
   })
   .on('data', function (data) {
-    //let connectionId = data.replace(/\"/g, "");
     event2callback['data'](data);
-    //db.get(connection_prefix+connectionId, function(err, value) {
-    //  if (err) return;
-    //  event2callback['data'](value);
-    //});
   })
   .on('error', function (err) {
     event2callback['err'](err);
@@ -642,7 +687,8 @@ function saveConnection(connection, connectionId) {
   add_connection2data(connection);
   const ops = [
     { type: 'put', key: connection_prefix+connectionId, value: connection },
-    { type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection }
+    { type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection },
+    { type: 'put', key: connection_by_ip_prefix+connection.host+"/"+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection}
   ];
   db.batch(ops, function (err) {
     if (err) return console.log('Ooops!', err);
