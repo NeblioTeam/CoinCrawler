@@ -530,8 +530,8 @@ function connectionsByHost(host) {
     'end': function() {}
   }
   db.createValueStream({
-    gt: connection_by_ip_prefix+host, 
-    lt: connection_by_ip_prefix+"z"
+    gt: connection_by_ip_prefix+host+"/", 
+    lt: connection_by_ip_prefix+host+"/"+"z",
   })
   .on('data', function (data) {
     event2callback['data'](data);
