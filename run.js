@@ -8,7 +8,7 @@ const bitcore_lib = require('bitcore-lib');
 const networks = require('./networks');
 const BitSet = require('bitset');
 
-var network_name = "bch-livenet";
+var network_name = "bch";
 let api_port = 3000;
 
 const asnLookup = maxmind.openSync('GeoLite2-ASN/GeoLite2-ASN.mmdb');
@@ -31,6 +31,8 @@ process.argv.forEach(function (val, index, array) {
   } 
 }); 
 
+
+
 let protocolVersion;
 let seedNodes;
 let heightIncludeUA;
@@ -44,6 +46,7 @@ networks.forEach(network => {
 });
 
 const db = level('./databases/'+network_name, { valueEncoding: 'json', cacheSize: 128*1024*1024, blockSize: 4096, writeBufferSize: 4*1024*1024 });
+
 
 //Database key prefixes
 const connection_prefix = "connection/";
@@ -254,6 +257,67 @@ function add_connection2data(connection) {
   }
 }
 
+function indexConnections() {
+  return new Promise(function(resolve, reject) {
+
+    let mustReindex = false;
+    db.createValueStream({
+      gt: connection_by_time_prefix, 
+      lt: connection_by_time_prefix+"z",
+      reverse: true,
+      limit: 1
+    })
+    .on('data', function (data) {
+      if (typeof data === "string") {
+        console.log("Reinxing connections required. Doing it now.");
+        mustReindex = true;
+      } else if (typeof data === "object") {
+        console.log("got object. no need to index!");
+      }
+    })
+    .on('error', function (err) {
+      console.log("GOT db error", err);
+    })
+    .on('close', function () {
+      if (!mustReindex) {
+        resolve();
+      } else {
+        let savePromises = [];
+        db.createReadStream({
+          gt: connection_prefix, 
+          lt: connection_prefix+"z"
+        })
+        .on('data', function (data) {
+          connectionFound = true;
+          let connection = data.value;
+          let connectionId = data.key.substr(data.key.indexOf("/")+1);
+          let savePromise = new Promise(function(resolve2, reject2) {
+            db.put(connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, connection, function (err) {
+              if (err) {
+                reject2(err);
+              }
+              resolve2();
+            });
+          });
+          savePromises.push(savePromise);
+        })  
+        .on('error', function (err) {
+          console.log("GOT db error2", err);
+        })
+        .on('close', function () {
+          Promise.all(savePromises).then(function(values) {
+            resolve();
+          });
+        })
+        .on('end', function () {
+        });
+      }
+    })
+    .on('end', function () {
+    });
+  });  
+}
+
 function loadDataFromDb() {
   let currentTime = (new Date()).getTime();
   data.epoch_hour = Math.floor(currentTime/(1000*60*60));
@@ -414,13 +478,16 @@ function update_if_hour_changed() {
 
 
 console.log("Loading connections from db. This can take a while.");
-loadDataFromDb().then(function() {
-  console.log("Data loaded. Acccepting requests");
-  app.listen(api_port);
-  setInterval(connectToPeers, 50);
 
-  if (addr_db_ttl !== undefined && addr_db_ttl > 0) 
-    setInterval(removeOldAddr, 1000*60);
+indexConnections().then(function() {
+  loadDataFromDb().then(function() {
+    console.log("Data loaded. Acccepting requests");
+    app.listen(api_port);
+    setInterval(connectToPeers, 50);
+  
+    if (addr_db_ttl !== undefined && addr_db_ttl > 0) 
+      setInterval(removeOldAddr, 1000*60);
+  });
 });
 
 
@@ -450,18 +517,19 @@ function recentConnections(duration) {
 
   db.createValueStream({
     gt: connection_by_time_prefix+integer2LexString(currentTime-duration), 
-    lt: connection_by_time_prefix+"z",
-    valueEncoding: 'utf8'
+    lt: connection_by_time_prefix+"z"//,
+    //valueEncoding: 'utf8'
   })
   .on('data', function (data) {
-    let connectionId = data.replace(/\"/g, "");
-    db.get(connection_prefix+connectionId, function(err, value) {
-      if (err) return;
-      event2callback['data'](value);
-    });
+    //let connectionId = data.replace(/\"/g, "");
+    event2callback['data'](data);
+    //db.get(connection_prefix+connectionId, function(err, value) {
+    //  if (err) return;
+    //  event2callback['data'](value);
+    //});
   })
   .on('error', function (err) {
-    event2callback['err'](value);
+    event2callback['err'](err);
   })
   .on('close', function () {
     event2callback['close']();
@@ -576,7 +644,7 @@ function saveConnection(connection, connectionId) {
   add_connection2data(connection);
   const ops = [
     { type: 'put', key: connection_prefix+connectionId, value: connection },
-    { type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connectionId }
+    { type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection }
   ];
   db.batch(ops, function (err) {
     if (err) return console.log('Ooops!', err);
@@ -844,4 +912,5 @@ process.on('uncaughtException', (err) => {
   if (!err.toString().startsWith('Error: Unsupported message command')) {
     console.log("unkown err", err);
   }
+  console.log("uncaugt ex", err);
 });
