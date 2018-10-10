@@ -351,48 +351,54 @@ function loadDataFromDb() {
   });
 }
 
-let connectionsSortedByTime = {
-  connections: [],
+let hour2medianHeight = {
+};
+
+let lt1hmedian = {
+  value: 0,
   time: 0
 }
 
-function computeMedianHeight(time, duration) {
-  let currentTime = (new Date()).getTime();
-  if (currentTime-connectionsSortedByTime.time >= 1000*60) {
-    connectionsSortedByTime.connections = Object.keys(data.hostdata.host2lastconnection)
-    .map(host => data.hostdata.host2lastconnection[host])
-    .filter(connection => typeof connection.subversion === "string" && heightIncludeUA.some(ua => connection.subversion.indexOf(ua) >= 0))
-    .sort((connection1, connection2) => connection1.connectTime - connection2.connectTime);
-    connectionsSortedByTime.time = currentTime;
-  }
-  let connections = connectionsSortedByTime.connections;
-  let start = 0;
-  let end = connections.length-1;
-  let middle;
-  while (start <= end) {
-    middle = start+Math.floor((end-start)/2);
-    if (connections[middle].connectTime > time) {//too big
-      end = middle-1;
-    } else if (connections[middle].connectTime < time) {//too small
-      start = middle+1;
-    } else {
-      break;//found
-    }
-  }  
-  let i = middle;
-  let heights = [];
-  while (i >= 0 && time-connections[i].connectTime < duration) {
-    let connection = connections[i];
-    heights.push(connection.bestHeight);
-    i--;
-  }
-  heights.sort();
-  return heights[Math.floor(heights.length/2)];
+async function computeMedianHeightFromDb(fromTime, toTime) {
+  return new Promise(function(resolve, reject) {
+    let heights = [];
+    connectionsBetween(fromTime, toTime)
+    .on('data', function(connection) {
+      if (typeof connection.subversion === "string" && heightIncludeUA.some(ua => connection.subversion.indexOf(ua) >= 0)) {
+        heights.push(connection.bestHeight);
+      }
+    })
+    .on('close', function() {
+      heights.sort();//might be redundant
+      resolve(heights[Math.floor(heights.length/2)]);
+    });
+  });  
 }
 
-function data2Csv(delimiter, language, requireSync, includeSync) {
+async function computeMedianHeight(time, duration) {
+  let currentTime = (new Date()).getTime();
+  let epoch_hour = Math.floor(time/(1000*60*60));
+  if (currentTime-time < 1000*60*60) {
+    if (currentTime-lt1hmedian.time > 1000*60*5) {
+      let medianHeight = await computeMedianHeightFromDb(time-1000*60*60, time);
+      lt1hmedian = {
+        value: medianHeight,
+        time: currentTime
+      }
+    } 
+    return lt1hmedian.value;
+  } else {
+    if (hour2medianHeight[epoch_hour] === undefined) {
+      let medianHeight = await computeMedianHeightFromDb((epoch_hour-1)*1000*60*60, epoch_hour*1000*60*60);
+      hour2medianHeight[epoch_hour] = medianHeight;
+    }  
+    return hour2medianHeight[epoch_hour];
+  }
+}
+
+async function data2Csv(delimiter, language, requireSync, includeSync) {
   let lines = [];
-  Object.keys(data.hostdata.host2lastconnection).forEach(host => {
+  for (const host of Object.keys(data.hostdata.host2lastconnection)) {
     let lastConnection = data.hostdata.host2lastconnection[host];
     let components = host.split(":");
     let ip = components[0];
@@ -401,9 +407,10 @@ function data2Csv(delimiter, language, requireSync, includeSync) {
     let asn = asnLookup.get(ip);
     let not_available = "N/A";
     let country;
-    let modeHeight = computeMedianHeight(lastConnection.connectTime, 1000*60*10);
-    let synced = Math.abs(lastConnection.bestHeight-modeHeight) < 50;
-    if (requireSync && !synced) return;
+    let modeHeight = await computeMedianHeight(lastConnection.connectTime, 1000*60*10);
+    if (modeHeight === undefined) continue;
+    let synced = Math.abs(lastConnection.bestHeight-modeHeight) < 100;
+    if (requireSync && !synced) continue;
     if (geo && geo.country) {
       country = countries.getName(geo.country, language);
       if (!country) country = geo.country;
@@ -430,7 +437,7 @@ function data2Csv(delimiter, language, requireSync, includeSync) {
       columns.push(synced ? 1 : 0);
     }  
     lines.push(columns.map(column => "\""+column.toString().replace(/\"/g, "\"\"")+"\"").join(delimiter));
-  });
+  }
   return lines.join("\n")
 }
 
@@ -449,7 +456,9 @@ app.get("/full_nodes.csv", function(req, res) {
     language, 
     requireSync === "true" || requireSync === "1", 
     includeSync === "true" || includeSync === "1");
-  res.send(response);
+  response.then(function(data) {
+    res.send(data);
+  });
 });
 
 
@@ -554,9 +563,7 @@ function connectionsByHost(host) {
   }
 }  
 
-function recentConnections(duration) {
-  let currentTime = (new Date()).getTime();
-
+function connectionsBetween(from, to) {
   let event2callback = {
     'data': function(data) {},
     'error': function(err) {},
@@ -565,8 +572,8 @@ function recentConnections(duration) {
   }
 
   db.createValueStream({
-    gt: connection_by_time_prefix+integer2LexString(currentTime-duration), 
-    lt: connection_by_time_prefix+"z"
+    gt: connection_by_time_prefix+integer2LexString(from), 
+    lt: connection_by_time_prefix+integer2LexString(to)
   })
   .on('data', function (data) {
     event2callback['data'](data);
@@ -587,6 +594,11 @@ function recentConnections(duration) {
       return this;
     }
   }
+}
+
+function recentConnections(duration) {
+  let currentTime = (new Date()).getTime();
+  return connectionsBetween(currentTime-duration, currentTime);
 }
 
 
