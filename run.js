@@ -282,7 +282,7 @@ function indexConnections() {
       if (!mustReindex) {
         resolve();
       } else {
-        let savePromises = [];
+        let ops = [];
         db.createReadStream({
           gt: connection_prefix, 
           lt: connection_prefix+"z"
@@ -291,21 +291,20 @@ function indexConnections() {
           connectionFound = true;
           let connection = data.value;
           let connectionId = data.key.substr(data.key.indexOf("/")+1);
-          let savePromise = new Promise(function(resolve2, reject2) {
-            db.put(connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, connection, function (err) {
-              if (err) {
-                reject2(err);
-              }
-              resolve2();
+          if (ops.length >= 1000) {
+            db.batch(ops, function (err) {
+              if (err) return console.log('Ooops!', err);
             });
-          });
-          savePromises.push(savePromise);
+            ops = [];
+          }
+          ops.push({type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection});
         })  
         .on('error', function (err) {
           console.log("GOT db error2", err);
         })
         .on('close', function () {
-          Promise.all(savePromises).then(function(values) {
+          db.batch(ops, function (err) {
+            if (err) return console.log('Ooops!', err);
             resolve();
           });
         })
@@ -477,9 +476,8 @@ function update_if_hour_changed() {
 
 
 
-console.log("Loading connections from db. This can take a while.");
-
 indexConnections().then(function() {
+  console.log("Loading connections from db. This can take a while.");
   loadDataFromDb().then(function() {
     console.log("Data loaded. Acccepting requests");
     app.listen(api_port);
