@@ -106,7 +106,7 @@ app.get('/connections/:host_ip.csv', function(req, res) {
   let result = "";
   connectionsByHost(ip)
   .on('data', function(connection) {
-    if (connection.host !== ip) return;
+    //if (connection.host !== ip) return;
     let columns = [connection.connectTime, 
       connection.host,
       connection.port];
