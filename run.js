@@ -380,7 +380,7 @@ async function computeMedianHeight(time, duration) {
   let epoch_hour = Math.floor(time/(1000*60*60));
   if (currentTime-time < 1000*60*60) {
     if (currentTime-lt1hmedian.time > 1000*60*5) {
-      let medianHeight = await computeMedianHeightFromDb(time-1000*60*60, time);
+      let medianHeight = await computeMedianHeightFromDb(time-1000*60*10, time);
       lt1hmedian = {
         value: medianHeight,
         time: currentTime
@@ -389,12 +389,15 @@ async function computeMedianHeight(time, duration) {
     return lt1hmedian.value;
   } else {
     if (hour2medianHeight[epoch_hour] === undefined) {
-      let medianHeight = await computeMedianHeightFromDb((epoch_hour-1)*1000*60*60, epoch_hour*1000*60*60);
+      let medianHeight = await computeMedianHeightFromDb(epoch_hour*1000*60*60-1000*60*10, epoch_hour*1000*60*60);
       hour2medianHeight[epoch_hour] = medianHeight;
     }  
     return hour2medianHeight[epoch_hour];
   }
 }
+
+let ip2geo = {};
+let ip2asn = {};
 
 async function data2Csv(delimiter, language, requireSync, includeSync) {
   let lines = [];
@@ -403,8 +406,14 @@ async function data2Csv(delimiter, language, requireSync, includeSync) {
     let components = host.split(":");
     let ip = components[0];
     let port = components[1];
-    let geo = geoip.lookup(ip);
-    let asn = asnLookup.get(ip);
+    if (ip2geo[ip] === undefined) {
+      ip2geo[ip] = geoip.lookup(ip);
+    }
+    if (ip2asn[ip] === undefined) {
+      ip2asn[ip] = asnLookup.get(ip);
+    }
+    let geo = ip2geo[ip];
+    let asn = ip2asn[ip];
     let not_available = "N/A";
     let country;
     let modeHeight = await computeMedianHeight(lastConnection.connectTime, 1000*60*10);
