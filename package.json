@@ -1,6 +1,6 @@
 {
   "name": "coin-crawler",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Bitcoin and Altcoin node crawler sponsored by Alexey Eromenko \"Technologov\"",
   "main": "run.js",
   "bin": {

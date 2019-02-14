@@ -16,7 +16,7 @@ Download [maxmind ASN database](https://geolite.maxmind.com/download/geoip/datab
 
 ## 2. Run:
 
-coin-clustering -network=btc -port=3003
+coin-crawler -network=btc -port=3003
 
 currently btc, bch, ltc and dash are supported.
 
@@ -31,7 +31,7 @@ http://localhost:3003/full_nodes.csv?active=1
 ### 4.3. Rate limiter: 
 (some host or VPS providers will balk at you for virus-like activity, which crawler is.)
 
-coin-clustering -network=btc -port=3003 -max_failed_connections_per_minute=200 -max_concurrent_connections=300
+coin-crawler -network=btc -port=3003 -max_failed_connections_per_minute=200 -max_concurrent_connections=300
 
 defaults: -max_failed_connections_per_minute=300 -max_concurrent_connections=800
 
