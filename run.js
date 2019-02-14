@@ -10,12 +10,13 @@ const BitSet = require('bitset');
 
 var network_name = "bch";
 let api_port = 3000;
+let cwd = process.cwd();
 
-const asnLookup = maxmind.openSync('GeoLite2-ASN/GeoLite2-ASN.mmdb');
+const asnLookup = maxmind.openSync(cwd+'/GeoLite2-ASN.mmdb');
 
 const stay_connected_time = 1000*60*5;//how long to wait for addr messages.
-const max_concurrent_connections = 300;
-const max_failed_connections_per_minute = 800;
+let max_concurrent_connections = 300;
+let max_failed_connections_per_minute = 800;
 const max_age = 1000*60*60*5;
 const addr_db_ttl = -1;//How long to save addr messages for. The saved addr messages are currently not used for anything. 0 = never delete, -1 = never save
 const connect_timeout = 1000*30;
@@ -31,6 +32,12 @@ process.argv.forEach(function (val, index, array) {
   }
   if (arr.length === 2 && arr[0] === "-port") {
     api_port = arr[1];
+  }
+  if (arr.length === 2 && arr[0] === "-max_concurrent_connections") {
+    max_concurrent_connections = Number(arr[1]);
+  }
+  if (arr.length === 2 && arr[0] === "-max_failed_connections_per_minute") {
+    max_failed_connections_per_minute = Number(arr[1]);
   }
   if (arr.length === 1 && arr[0] === "-reindex-connection-ip-addresses") {
     indexTasks.push(reindexConnectionIpAddresses);
@@ -54,7 +61,7 @@ networks.forEach(network => {
   bitcore_lib.Networks.add(network);
 });
 
-const db = level('./databases/'+network_name, { valueEncoding: 'json', cacheSize: 128*1024*1024, blockSize: 4096, writeBufferSize: 4*1024*1024 });
+const db = level(cwd+'/'+network_name+'_db', { valueEncoding: 'json', cacheSize: 128*1024*1024, blockSize: 4096, writeBufferSize: 4*1024*1024 });
 
 
 //Database key prefixes
