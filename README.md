@@ -12,7 +12,7 @@ On Debian / Ubuntu, you can run:
 
 npm install -g coin-crawler
 
-Download [maxmind ASN databasek](https://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN.tar.gz) and place GeoLite2-ASN.mmdb in the directory where you are planning to run the crawler.
+Download [maxmind ASN database](https://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN.tar.gz) and place GeoLite2-ASN.mmdb in the directory where you are planning to run the crawler.
 
 ## 2. Run:
 
