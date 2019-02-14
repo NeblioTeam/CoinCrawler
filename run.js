@@ -7,6 +7,7 @@ const maxmind = require('maxmind');
 const bitcore_lib = require('bitcore-lib');
 const networks = require('./networks');
 const BitSet = require('bitset');
+const fs = require('fs');
 
 var network_name = "bch";
 let api_port = 3000;
@@ -21,6 +22,13 @@ const max_age = 1000*60*60*5;
 const addr_db_ttl = -1;//How long to save addr messages for. The saved addr messages are currently not used for anything. 0 = never delete, -1 = never save
 const connect_timeout = 1000*30;
 const handshake_timeout = 1000*30;
+
+
+var dir = cwd+'/databases';
+if (!fs.existsSync(dir)){
+  fs.mkdirSync(dir);
+}
+
 
 
 let indexTasks = [];
@@ -61,7 +69,7 @@ networks.forEach(network => {
   bitcore_lib.Networks.add(network);
 });
 
-const db = level(cwd+'/'+network_name+'_db', { valueEncoding: 'json', cacheSize: 128*1024*1024, blockSize: 4096, writeBufferSize: 4*1024*1024 });
+const db = level(cwd+'/databases/'+network_name, { valueEncoding: 'json', cacheSize: 128*1024*1024, blockSize: 4096, writeBufferSize: 4*1024*1024 });
 
 
 //Database key prefixes
