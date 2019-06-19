@@ -9,19 +9,19 @@ const networks = require('./networks');
 const BitSet = require('bitset');
 const fs = require('fs');
 
-var network_name = "bch";
-let api_port = 3000;
+var network_name = "nebl";
+let api_port = 3003;
 let cwd = process.cwd();
 
 const asnLookup = maxmind.openSync(cwd+'/GeoLite2-ASN.mmdb');
 
-const stay_connected_time = 1000*60*5;//how long to wait for addr messages.
-let max_concurrent_connections = 300;
-let max_failed_connections_per_minute = 800;
-const max_age = 1000*60*60*5;
-const addr_db_ttl = -1;//How long to save addr messages for. The saved addr messages are currently not used for anything. 0 = never delete, -1 = never save
-const connect_timeout = 1000*30;
-const handshake_timeout = 1000*30;
+const stay_connected_time = 1000*60*1;//how long to wait for addr messages.
+let max_concurrent_connections = 100;
+let max_failed_connections_per_minute = 100;
+const max_age = 1000*60*60*48;
+const addr_db_ttl = 1000*60*60*24; // one day //How long to save addr messages for. The saved addr messages are currently not used for anything. 0 = never delete, -1 = never save
+const connect_timeout = 1000*60*1;
+const handshake_timeout = 1000*60*1;
 
 
 var dir = cwd+'/databases';
@@ -53,7 +53,7 @@ process.argv.forEach(function (val, index, array) {
   if (arr.length === 1 && arr[0] === "-reindex-connection-times") {
     indexTasks.push(reindexConnectionTimes);
   }
-}); 
+});
 
 
 
@@ -97,9 +97,9 @@ const messages = new p2p.Messages({network: bitcore_lib.Networks.get(network_nam
 
 var app = express();
 
-app.get('/node_count', function (req, res) {
+app.get('/connected_node_count', function (req, res) {
   let hours = req.query.hours;
-  if (!isFinite(hours) || hours > 10) hours = 10;
+  if (!isFinite(hours) || hours > 24) hours = 24;
   let host2lastconnection = {};
   recentConnections(1000*60*60*hours)
   .on('data', function(connection) {
@@ -115,6 +115,23 @@ app.get('/node_count', function (req, res) {
   });
 });
 
+app.get('/24h_active_node_count', function (req, res) {
+  let hours = 24;
+  let host2lastconnection = {};
+  recentConnections(1000*60*60*hours)
+  .on('data', function(connection) {
+    let key = connection.host+":"+connection.port;
+    if (host2lastconnection[key] === undefined || connection.connectTime > host2lastconnection[key].connectTime)  {
+      host2lastconnection[key] = connection;
+    }
+  })
+  .on('close', function() {
+    res.send(
+      ""+Object.keys(host2lastconnection).filter(host => host2lastconnection[host]).length
+    );
+  });
+});
+
 app.get('/connections/:host_ip.csv', function(req, res) {
   let ip = req.params.host_ip;
   let delimiter = ","
@@ -122,7 +139,7 @@ app.get('/connections/:host_ip.csv', function(req, res) {
   connectionsByHost(ip)
   .on('data', function(connection) {
     //if (connection.host !== ip) return;
-    let columns = [connection.connectTime, 
+    let columns = [connection.connectTime,
       connection.host,
       connection.port];
     if (connection.success !== undefined) {
@@ -132,7 +149,7 @@ app.get('/connections/:host_ip.csv', function(req, res) {
       columns.push(connection.services);
     }
     if (result.length > 0) result += "\n";
-    result += columns.join(delimiter);  
+    result += columns.join(delimiter);
   })
   .on('close', function() {
     res.set('Content-Type', 'text/csv');
@@ -160,7 +177,7 @@ let active30d = new BitSet;
 let host2active = {};
 let host2LastSuccesfullConnection = {};
 
-every hour: 
+every hour:
   active30d = active30d.slice(1); active30d.set(30*24, 1)//remove last hour 30 days ago
   for (Object.keys(host2active2).forEach(host => host2active2[host] = host2active2[host].slice(1)));
 */
@@ -203,7 +220,7 @@ function update_crawler_data_statistics() {
     }
     if (hours_ago <= 24*7) {
       count7d++;
-    } 
+    }
     if (hours_ago <= 24*30) {
       count30d++;
     }
@@ -224,7 +241,7 @@ function update_host_data_statistics() {
       let host_active = data.hostdata.host2active[host].get(hours_ago);
       if (!crawler_active || !host_active) {
         return;
-      } 
+      }
       if (hours_ago <= 2) {
         count2h++;
       }
@@ -236,16 +253,16 @@ function update_host_data_statistics() {
       }
       if (hours_ago <= 24*7) {
         count7d++;
-      } 
+      }
       if (hours_ago <= 24*30) {
         count30d++;
       }
-    }); 
+    });
     data.hostdata.host2count2h[host] = count2h;
     data.hostdata.host2count8h[host] = count8h;
     data.hostdata.host2count24h[host] = count24h;
     data.hostdata.host2count7d[host] = count7d;
-    data.hostdata.host2count30d[host] = count30d; 
+    data.hostdata.host2count30d[host] = count30d;
   });
 }
 
@@ -275,8 +292,8 @@ function add_connection2data(connection) {
 
   if (data.hostdata.host2active[host] === undefined) {
     data.hostdata.host2active[host] = new BitSet();
-  }  
-  data.hostdata.host2active[host].set(hours_ago, connection.success ? 1 : 0); 
+  }
+  data.hostdata.host2active[host].set(hours_ago, connection.success ? 1 : 0);
   if (connection.success && (data.hostdata.host2lastconnection[host] === undefined || data.hostdata.host2lastconnection[host].connectedTime < connection.connectedTime)) {
     data.hostdata.host2lastconnection[host] = connection;
   }
@@ -287,7 +304,7 @@ function reindexConnectionTimes() {
   return new Promise(function(resolve, reject) {
     let ops = [];
     db.createReadStream({
-      gt: connection_prefix, 
+      gt: connection_prefix,
       lt: connection_prefix+"z"
     })
     .on('data', function (data) {
@@ -301,7 +318,7 @@ function reindexConnectionTimes() {
         ops = [];
       }
       ops.push({type: 'put', key: connection_by_time_prefix+integer2LexString(connection.connectTime)+"/"+connectionId, value: connection});
-    })  
+    })
     .on('error', function (err) {
       console.log("GOT db error2", err);
     })
@@ -313,7 +330,7 @@ function reindexConnectionTimes() {
     })
     .on('end', function () {
     });
-  });  
+  });
 }
 
 function reindexConnectionIpAddresses() {
@@ -321,7 +338,7 @@ function reindexConnectionIpAddresses() {
   return new Promise(function(resolve, reject) {
     let ops = [];
     db.createReadStream({
-      gt: connection_prefix, 
+      gt: connection_prefix,
       lt: connection_prefix+"z"
     })
     .on('data', function (data) {
@@ -357,7 +374,7 @@ function loadDataFromDb() {
     recentConnections(1000*60*60*24*30)
     .on('data', function(connection) {
       add_connection2data(connection);
-    })  
+    })
     .on('close', function() {
       update_crawler_data_statistics();
       update_host_data_statistics();
@@ -387,7 +404,7 @@ async function computeMedianHeightFromDb(fromTime, toTime) {
       heights.sort();//might be redundant
       resolve(heights[Math.floor(heights.length/2)]);
     });
-  });  
+  });
 }
 
 async function computeMedianHeight(time, duration) {
@@ -400,13 +417,13 @@ async function computeMedianHeight(time, duration) {
         value: medianHeight,
         time: currentTime
       }
-    } 
+    }
     return lt1hmedian.value;
   } else {
     if (hour2medianHeight[epoch_hour] === undefined) {
       let medianHeight = await computeMedianHeightFromDb(epoch_hour*1000*60*60-1000*60*10, epoch_hour*1000*60*60);
       hour2medianHeight[epoch_hour] = medianHeight;
-    }  
+    }
     return hour2medianHeight[epoch_hour];
   }
 }
@@ -442,14 +459,14 @@ async function data2Csv(delimiter, language, requireSync, includeSync) {
       country = not_available;
     }
     let columns = [ip,
-      port, 
-      data.count2h === 0 || data.hostdata.host2count2h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count2h[host]/data.count2h), 
-      data.count8h-data.count2h === 0 || data.hostdata.host2count8h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count8h[host]/data.count8h), 
-      data.count24h-data.count8h === 0 || data.hostdata.host2count24h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count24h[host]/data.count24h), 
-      data.count7d-data.count24h === 0 || data.hostdata.host2count7d[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count7d[host]/data.count7d), 
-      data.count30d-data.count7d === 0 || data.hostdata.host2count30d[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count30d[host]/data.count30d), 
+      port,
+      data.count2h === 0 || data.hostdata.host2count2h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count2h[host]/data.count2h),
+      data.count8h-data.count2h === 0 || data.hostdata.host2count8h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count8h[host]/data.count8h),
+      data.count24h-data.count8h === 0 || data.hostdata.host2count24h[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count24h[host]/data.count24h),
+      data.count7d-data.count24h === 0 || data.hostdata.host2count7d[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count7d[host]/data.count7d),
+      data.count30d-data.count7d === 0 || data.hostdata.host2count30d[host] === undefined ? not_available : formatPercentage(data.hostdata.host2count30d[host]/data.count30d),
       geo && geo.region ? geo.region : not_available,
-      country, 
+      country,
       geo && geo.city ? geo.city : not_available,
       geo && geo.ll && geo.ll.length===2 && geo.ll[0] ? geo.ll[0] : not_available,
       geo && geo.ll && geo.ll.length===2 && geo.ll[1] ? geo.ll[1] : not_available,
@@ -459,7 +476,7 @@ async function data2Csv(delimiter, language, requireSync, includeSync) {
       lastConnection.subversion !== undefined && lastConnection.subversion !== null ? lastConnection.subversion : not_available];
     if (includeSync) {
       columns.push(synced ? 1 : 0);
-    }  
+    }
     lines.push(columns.map(column => "\""+column.toString().replace(/\"/g, "\"\"")+"\"").join(delimiter));
   }
   return lines.join("\n")
@@ -476,9 +493,9 @@ app.get("/full_nodes.csv", function(req, res) {
   if (includeSync === undefined) includeSync = "false";
 
   res.set('Content-Type', 'text/csv');
-  let response = data2Csv(delimiter, 
-    language, 
-    requireSync === "true" || requireSync === "1", 
+  let response = data2Csv(delimiter,
+    language,
+    requireSync === "true" || requireSync === "1",
     includeSync === "true" || includeSync === "1");
   response.then(function(data) {
     res.send(data);
@@ -535,8 +552,8 @@ p.then(function() {
     console.log("Data loaded. Acccepting requests");
     app.listen(api_port);
     setInterval(connectToPeers, 50);
-  
-    if (addr_db_ttl !== undefined && addr_db_ttl > 0) 
+
+    if (addr_db_ttl !== undefined && addr_db_ttl > 0)
       setInterval(removeOldAddr, 1000*60);
   });
 });
@@ -563,7 +580,7 @@ function connectionsByHost(host) {
     'end': function() {}
   }
   db.createValueStream({
-    gt: connection_by_ip_prefix+host+"/", 
+    gt: connection_by_ip_prefix+host+"/",
     lt: connection_by_ip_prefix+host+"/"+"z",
   })
   .on('data', function (data) {
@@ -585,7 +602,7 @@ function connectionsByHost(host) {
       return this;
     }
   }
-}  
+}
 
 function connectionsBetween(from, to) {
   let event2callback = {
@@ -596,7 +613,7 @@ function connectionsBetween(from, to) {
   }
 
   db.createValueStream({
-    gt: connection_by_time_prefix+integer2LexString(from), 
+    gt: connection_by_time_prefix+integer2LexString(from),
     lt: connection_by_time_prefix+integer2LexString(to)
   })
   .on('data', function (data) {
@@ -715,7 +732,7 @@ function createQueue(callback) {
     result.sort((a, b) => a.nextConnection-b.nextConnection);
     callback(result);
   });
-}  
+}
 
 
 function saveConnection(connection, connectionId) {
@@ -742,7 +759,7 @@ function connectToPeers() {
   let status = "queue: "+ queue.length+", failed_connections_queue: "+ failed_connections_queue.length+", concurrent_connections: "+concurrent_connections;
   if (queue.length > 0 && queue[0].nextConnection > currentTime) {
     status += ", next action in " + Math.floor((queue[0].nextConnection-currentTime)/1000) + " seconds.";
-  }  
+  }
   if (status !== status_string) {
     console.log(status);
     status_string = status;
@@ -750,8 +767,8 @@ function connectToPeers() {
 
   if (queue.length > 0) {
     let nextActionTime = currentTime-lastConnectTime > 1000*60*1 ? 0 : queue[0].nextConnection;
-    if (nextActionTime <= currentTime 
-      && concurrent_connections < max_concurrent_connections 
+    if (nextActionTime <= currentTime
+      && concurrent_connections < max_concurrent_connections
       && failed_connections_queue.length < max_failed_connections_per_minute) {
       let e = queue.shift();
       let host = e.host;
@@ -768,9 +785,9 @@ function connectToPeers() {
       let connectionSaved = false;
 
       let connection = {
-        host: peer.host, 
+        host: peer.host,
         port: peer.port,
-        success:false, 
+        success:false,
         connectTime: connectTime
       };
 
@@ -784,7 +801,7 @@ function connectToPeers() {
       });*/
 
       let connectTimeout = setTimeout(function() {
-        peer.disconnect(); 
+        peer.disconnect();
       }, connect_timeout);
 
       let handshakeTimeout;
@@ -793,8 +810,9 @@ function connectToPeers() {
       peer.on('connect', function(e) {
         clearTimeout(connectTimeout);
         handshakeTimeout = setTimeout(function() {
-          peer.disconnect(); 
+          peer.disconnect();
         }, handshake_timeout);
+
       });
 
       peer.on('version', function(e) {
@@ -821,13 +839,13 @@ function connectToPeers() {
         let connectedTime = (new Date()).getTime();
         connection = {
           host: peer.host,
-          port: peer.port, 
-          version: peer.version, 
-          subversion: peer.subversion, 
-          bestHeight: peer.bestHeight, 
+          port: peer.port,
+          version: peer.version,
+          subversion: peer.subversion,
+          bestHeight: peer.bestHeight,
           services: peer.services,
-          success:true, 
-          connectedTime: connectedTime, 
+          success:true,
+          connectedTime: connectedTime,
           connectTime: connectTime,
         };
 
@@ -839,23 +857,27 @@ function connectToPeers() {
           if (err) return console.log('Ooops!', err) // some kind of I/O error
         });*/
 
-        
+
         let getaddr = messages.GetAddr();
         peer.sendMessage(getaddr);
 
         addrTimeout = setTimeout(function() {
           console.log("No addr message withing "+stay_connected_time/1000+" seconds");
-          peer.disconnect(); 
+          peer.disconnect();
         }, stay_connected_time);
       });
-      
+
       peer.on('error', function(err) {
         clearTimeout(handshakeTimeout);
         clearTimeout(connectTimeout);
+        if (!connectionSaved) {
+          connectionSaved = true;
+          saveConnection(connection, connectionId);
+        }
         console.log("peer error", err);
         peer.disconnect();
       });
-      
+
       peer.on('disconnect', function() {
         clearTimeout(handshakeTimeout);
         clearTimeout(connectTimeout);
@@ -869,12 +891,19 @@ function connectToPeers() {
           console.log('connection closed to '+peer.host+":"+peer.port);
         }
       });
-      
+
       peer.on('addr', function(message) {
         console.log(message.addresses.length+" addresses received from "+peer.host+":"+peer.port);
         let addrTimeStamp = (new Date()).getTime();
         let addrMessageId = createRandomId();
         message.addresses.forEach(function(address) {
+
+          // only accept addresses that were connected to in last 24
+          let currentTime = (new Date()).getTime();
+          if (currentTime-address.time.getTime() > 1000*60*60*24) {
+          	// console.log("ADDRESS TOO OLD. LAST TIME: "+ address.time.getTime());
+            return;
+          }
 
           let addressId = createRandomId();
           let obj = {connectionId: connectionId, addrMessageId: addrMessageId, timestamp: addrTimeStamp, ip: address.ip, port: address.port, time: address.time.getTime()};
@@ -883,7 +912,7 @@ function connectToPeers() {
             return;
           }
           if (address.ip.v4.startsWith("0.")) {
-            console.log(address.ip.v4+" start with 0. Ignoring");
+            //console.log(address.ip.v4+" start with 0. Ignoring");
             return;
           }
           if (obj.time > addrTimeStamp+5000) {
@@ -893,7 +922,7 @@ function connectToPeers() {
 
           let key = host2lastaddr_prefix+address.ip.v4+":"+address.port;
           db.get(key, function(err, value) {
-            
+
             const ops = [];
             if (addr_db_ttl === undefined || addr_db_ttl === 0 || Math.max(0, addrTimeStamp-address.time.getTime()) < addr_db_ttl) {
               ops.push({ type: 'put', key: addr_prefix+addressId, value: obj });
@@ -902,7 +931,7 @@ function connectToPeers() {
 
             if ((err && err.notFound) || address.time.getTime() > value) {
               ops.push({type: 'put', key: key, value: address.time.getTime()});
-            }  
+            }
             if (ops.length > 0) {
               db.batch(ops, function (err) {
                 if (err) return console.log('Ooops!', err);
@@ -917,7 +946,7 @@ function connectToPeers() {
         }
       });
       peer.connect();
-      
+
     }
   }
   if (queue.length < 250 && currentTime-lastRefreshTime > 1000*15) {
@@ -943,7 +972,7 @@ function refreshQueue() {
       seedNodes.forEach(host => queue.push({host:host, port: bitcore_lib.Networks.get(network_name).port, nextConnection:0}));
     } else {
       queue = data;
-    }  
+    }
     console.log("Queue refreshed. New size: "+queue.length);
     paused = false;
     lastRefreshTime = (new Date()).getTime();
@@ -958,8 +987,8 @@ function removeOldAddr() {
   let currentTime = (new Date()).getTime();
   let removeArr = [];
   db.createReadStream({
-    gt:addr_by_time_prefix, 
-    lt:addr_by_time_prefix+integer2LexString(currentTime-addr_db_ttl), 
+    gt:addr_by_time_prefix,
+    lt:addr_by_time_prefix+integer2LexString(currentTime-addr_db_ttl),
     valueEncoding: 'utf8',
     limit: 100000
   })
