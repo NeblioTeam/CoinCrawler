@@ -15,9 +15,9 @@ let cwd = process.cwd();
 
 const asnLookup = maxmind.openSync(cwd+'/GeoLite2-ASN.mmdb');
 
-const stay_connected_time = 1000*60*1;//how long to wait for addr messages.
-let max_concurrent_connections = 100;
-let max_failed_connections_per_minute = 100;
+const stay_connected_time = 1000*60*5;//how long to wait for addr messages.
+let max_concurrent_connections = 300;
+let max_failed_connections_per_minute = 800;
 const max_age = 1000*60*60*48;
 const addr_db_ttl = 1000*60*60*24; // one day //How long to save addr messages for. The saved addr messages are currently not used for anything. 0 = never delete, -1 = never save
 const connect_timeout = 1000*60*1;
